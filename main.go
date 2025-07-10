@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+
 	"github.com/MrIsmail1/Golang_images_matcher/analyzer"
 	"github.com/MrIsmail1/Golang_images_matcher/compare"
 	"github.com/MrIsmail1/Golang_images_matcher/model"
