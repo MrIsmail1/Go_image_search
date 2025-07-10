@@ -2,6 +2,8 @@ package compare
 
 import (
 	"fmt"
+	"github.com/MrIsmail1/Golang_images_matcher/analyzer"
+	"github.com/MrIsmail1/Golang_images_matcher/model"
 	"math"
 )
 
