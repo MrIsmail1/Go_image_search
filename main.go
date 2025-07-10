@@ -13,7 +13,7 @@ import (
 )
 
 func main() {
-	imageName := "13.jpg"
+	imageName := "chien8.jpg"
 	imagePath := "banque/images/" + imageName
 	jsonTarget := "banque/json/" + strings.TrimSuffix(imageName, filepath.Ext(imageName)) + ".json"
 
