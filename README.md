@@ -23,22 +23,31 @@ Nous avons voulu créer un système capable de :
 
 - 🔍 **Analyser automatiquement** les caractéristiques visuelles d'une image
 - 📊 **Comparer efficacement** plusieurs images entre elles
-- 🏆 **Identifier les correspondances** les plus pertinentes
-- 💾 **Optimiser les performances** en sauvegardant les analyses sous forme de descripteurs JSON
+- 🏆 **Identifier les correspondances** les plus pertinantes
+- 💾 **Optimiser les performances** avec un système de cache JSON intelligent
 
 ## 🏗️ Architecture du projet
 
-Nous avons pensé l'architecture autour de **4 modules principaux** pour assurer une séparation claire des responsabilités :
+Nous avons refactorisé l'architecture pour une **séparation claire des responsabilités** et **éviter les dépendances circulaires** :
 
 ```
 Go_image_search/
-├── 📁 analyzer/        # Analyse et extraction des caractéristiques d'images
-├── 📁 compare/         # Algorithmes de comparaison et calcul de similarité
-├── 📁 model/           # Structures de données et sérialisation JSON
-├── 📁 banque/          # Base de données d'images et descripteurs
-│   ├── 🖼️ images/     # Images de référence (JPG, PNG)
-│   └── 📄 json/       # Descripteurs pré-calculés (cache)
-└── 📄 main.go         # Point d'entrée et orchestration
+├── 📁 config/              # Configuration centralisée
+│   └── constants.go        # Paramètres du système
+├── 📁 analyser-utils/      # Modules d'analyse spécialisés
+│   ├── 🎨 color/          # Histogrammes RGB/HSV, couleurs moyennes
+│   ├── 🔢 hash/           # Hash perceptuel (pHash) et DCT
+│   ├── 🧮 math/           # Fonctions mathématiques utilitaires
+│   ├── 🔺 shape/          # Détection de contours et formes
+│   └── 🌫️ texture/        # Analyse de texture et rugosité
+├── 📁 analyzer/            # Orchestrateur principal d'analyse
+├── 📁 compare-utils/       # Métriques de comparaison
+├── 📁 compare/             # Moteur de comparaison principal
+├── 📁 model/               # Structures de données et persistance
+├── 📁 banque/              # Base de données d'images
+│   ├── 🖼️ images/         # Images de référence (JPG, PNG)
+│   └── 📄 json/           # Descripteurs pré-calculés (cache)
+└── 📄 main.go             # Point d'entrée et démonstration
 ```
 
 ## 🛠️ Technologies utilisées
@@ -48,6 +57,7 @@ Nous avons sélectionné **Go** comme langage principal pour ses avantages :
 - ⚡ **Performance élevée** pour le traitement d'images
 - 🔧 **Simplicité de déploiement** (binaire autonome)
 - 📚 **Écosystème riche** pour le traitement d'images
+- 🧩 **Modularité** excellente pour l'architecture refactorisée
 
 ### Dépendances principales
 
@@ -55,391 +65,221 @@ Nous avons sélectionné **Go** comme langage principal pour ses avantages :
 golang.org/x/image v0.26.0  // Extensions pour le traitement d'images
 ```
 
-Nous avons utilisé cette bibliothèque pour :
-
-- Le **redimensionnement bilinéaire** des images
-- Les **conversions de formats** d'images
-- Les **opérations de dessin** avancées
-
 ## 🧠 Algorithmes et méthodes
 
 ### 1. Analyse multi-niveaux
 
-Nous avons implémenté une **approche hybride** combinant :
+Notre **approche hybride** combine :
 
 #### 🌍 **Analyse globale de l'image**
 
-- **Histogrammes RGB et HSV** : nous calculons la distribution des couleurs
-- **Couleur moyenne** : nous extrayons la teinte dominante
-- **Signature de texture** : nous mesurons les variations locales d'intensité
-- **Hash perceptuel (pHash)** : nous générons une empreinte visuelle compacte
-- **Détection de contours** : nous appliquons un filtre Sobel pour les formes
+- **Histogrammes RGB et HSV** : distribution des couleurs avec 64 bins
+- **Couleur moyenne** : teinte dominante de l'image entière
+- **Hash perceptuel (pHash)** : signature binaire 64 bits robuste
+- **Signature de texture** : mesure de rugosité via variations locales
+- **Signature de forme** : densité de contours avec filtre Sobel
 
 #### 🔍 **Analyse locale par tuiles**
 
-Nous avons pensé à diviser chaque image en **81 tuiles** (grille 9×9) pour :
+Division en **81 tuiles** (9×9) pour :
+- Capturer les **détails régionaux** non visibles globalement
+- Robustesse face aux **occlusions partielles**
+- **Correspondance fine** entre zones similaires
 
-- Capturer les **détails locaux** non visibles dans l'analyse globale
-- Améliorer la **robustesse** face aux variations partielles
-- Permettre une **correspondance plus précise** entre régions similaires
+### 2. Algorithmes de traitement optimisés
 
-### 2. Algorithmes de traitement d'image
-
-#### **Redimensionnement intelligent**
-
-```go
-const StandardSize = 256  // Taille standard pour l'analyse
-```
-
-Nous normalisons toutes les images à **256×256 pixels** avec :
-
-- **Interpolation bilinéaire** pour préserver la qualité
-- **Préservation du ratio d'aspect** dans les calculs
-
-#### **Transformée en cosinus discrète (DCT)**
-
-Nous avons implémenté une **DCT 2D** pour le calcul du pHash :
+#### **Configuration centralisée**
 
 ```go
-func dct2D(img *image.Gray) [][]float64
+// config/constants.go
+const (
+    StandardSize = 256  // Taille standard (256×256 pixels)
+    TilesPerRow  = 9    // Grille 9×9 = 81 tuiles
+    Bins         = 64   // Résolution des histogrammes
+)
 ```
 
-Cette méthode nous permet de :
-
-- Concentrer l'**information visuelle** dans les basses fréquences
-- Générer un **hash robuste** aux petites modifications
-- Obtenir une **signature compacte** (64 bits)
-
-#### **Détection de contours Sobel**
-
-Nous appliquons les **matrices de convolution Sobel** :
+#### **Hash perceptuel robuste**
 
 ```go
-kernelX := [3][3]int{{-1, 0, 1}, {-2, 0, 2}, {-1, 0, 1}}
-kernelY := [3][3]int{{-1, -2, -1}, {0, 0, 0}, {1, 2, 1}}
+// analyser-utils/hash/generatePHash.go
+func GeneratePHash(img image.Image) string
 ```
 
-### 3. Métriques de similarité
+- **DCT 2D** pour transformation fréquentielle
+- **Binarisation adaptative** selon moyenne des coefficients
+- **Résistance** aux modifications légères (compression, redimensionnement)
 
-Nous avons développé un **score composite** pondéré :
+#### **Analyse couleur avancée**
+
+```go
+// analyser-utils/color/
+- ComputeHistogramRGB()  // Distribution RGB avec 64 bins
+- ComputeHistogramHSV()  // HSV plus robuste aux variations d'éclairage
+- ComputeMeanColor()     // Couleur dominante globale
+- RgbToHsv()            // Conversion d'espace colorimétrique
+```
+
+### 3. Métriques de similarité intelligentes
+
+Score composite avec **pondération optimisée** :
 
 ```go
 finalScore := (globalScore*0.65 + avgTileScore*0.35) * 100
 ```
 
 **Pondération des caractéristiques :**
-
-- 🎨 **Couleur moyenne** : 15% (distance euclidienne RGB)
+- 🎯 **Hash perceptuel** : 25% (distance de Hamming)
+- 🔺 **Formes/contours** : 25% (signature Sobel)
+- 🎨 **Couleur moyenne** : 15% (distance euclidienne)
+- 🌫️ **Texture** : 15% (variations d'intensité)
 - 📊 **Histogrammes RGB/HSV** : 20% (distance Manhattan)
-- 🌀 **Texture** : 15% (différence absolue des signatures)
-- 🔍 **Hash perceptuel** : 25% (distance de Hamming)
-- 📐 **Formes/contours** : 25% (différence des signatures de forme)
 
-## 📂 Structure du code
+## 📂 Structure du code refactorisée
+
+### Module `config/`
+**Configuration centralisée** pour éviter les dépendances circulaires :
+```go
+// constants.go - Point unique de vérité
+const StandardSize = 256  // Optimisé performance/qualité
+const TilesPerRow = 9     // Équilibre détail/vitesse  
+const Bins = 64          // Résolution histogrammes
+```
+
+### Module `analyser-utils/`
+**Fonctions spécialisées** par domaine d'analyse :
+
+#### `color/` - Analyse couleur
+```go
+func ComputeHistogramRGB(img image.Image) map[string][]int
+func ComputeHistogramHSV(img image.Image) map[string][]int  
+func ComputeMeanColor(img image.Image) [3]float64
+func RgbToHsv(r, g, b uint8) (float64, float64, float64)
+```
+
+#### `hash/` - Hash perceptuel
+```go
+func GeneratePHash(img image.Image) string
+func dct2D(img *image.Gray) [][]float64
+func averageDCT(dct [][]float64) float64
+```
+
+#### `texture/` - Analyse texture
+```go
+func ComputeTextureSignature(img image.Image) float64
+```
+
+#### `shape/` - Détection formes
+```go
+func ComputeShapeSignature(img image.Image) float64
+```
+
+#### `math/` - Utilitaires mathématiques
+```go
+func AbsDiff(a, b uint8) uint8
+func Dct2D(img *image.Gray) [][]float64
+```
 
 ### Module `analyzer/`
-
-#### `analyzer.go` - Orchestrateur principal
-
+**Orchestrateur principal** simplifié :
 ```go
 func AnalyzeImage(imagePath string) (*model.FullImageDescriptor, error)
 ```
+- Coordonne tous les analyseurs spécialisés
+- Gère le redimensionnement et la standardisation
+- Assemble le descripteur final multi-niveaux
 
-Nous avons centralisé ici :
-
-- Le **chargement et redimensionnement** des images
-- L'**orchestration** des différents analyseurs
-- L'**assemblage** du descripteur final
-
-#### `feature.go` - Extraction des caractéristiques
-
-Nous avons implémenté :
-
-- `computeHistogramRGB()` : histogrammes couleur avec **64 bins**
-- `computeHistogramHSV()` : conversion RGB→HSV puis histogrammes
-- `computeMeanColor()` : moyenne pondérée des pixels
-- `computeTextureSignature()` : variations locales d'intensité
-- `generatePHash()` : DCT + seuillage pour hash perceptuel
-
-#### `contours.go` - Analyse des formes
-
+### Module `compare-utils/`
+**Métriques de comparaison** spécialisées :
 ```go
-func computeShapeSignature(img image.Image) float64
+func EuclideanDistance(c1, c2 [3]float64) float64
+func HammingDistance(hash1, hash2 string) int  
+func CompareHistograms(h1, h2 map[string][]int) float64
 ```
-
-Nous appliquons un **filtre Sobel** pour :
-
-- Détecter les **gradients** d'intensité
-- Calculer la **densité de contours**
-- Générer une **signature de forme** normalisée
-
-### Module `model/`
-
-#### `descriptor.go` - Structures de données
-
-Nous avons conçu deux structures principales :
-
-```go
-type TileDescriptor struct {
-    HistogramRGB     map[string][]int
-    HistogramHSV     map[string][]int
-    PHash            string
-    MeanColor        [3]float64
-    TextureSignature float64
-    ShapeSignature   float64
-}
-
-type FullImageDescriptor struct {
-    ImageName       string
-    GlobalRGB       map[string][]int
-    GlobalHSV       map[string][]int
-    GlobalPHash     string
-    GlobalMeanColor [3]float64
-    GlobalTexture   float64
-    GlobalShape     float64
-    Tiles           []TileDescriptor
-}
-```
-
-Nous avons aussi implémenté :
-
-- `SaveDescriptor()` : sérialisation JSON avec indentation
-- `LoadDescriptor()` : désérialisation avec gestion d'erreurs
 
 ### Module `compare/`
-
-#### `comparator.go` - Calcul de similarité
-
+**Moteur de comparaison intelligent** :
 ```go
 func CompareDescriptors(desc1, desc2 *model.FullImageDescriptor) float64
-```
-
-Nous avons développé un **algorithme de comparaison multi-critères** :
-
-1. **Normalisation des distances** :
-
-   ```go
-   normRGB := rgbDist / float64(analyzer.Bins*3*255)
-   normHSV := hsvDist / float64(analyzer.Bins*3*255)
-   normColor := colorDist / (255 * math.Sqrt(3))
-   ```
-
-2. **Score global pondéré** :
-
-   ```go
-   globalScore := 1 - normRGB*0.1 - normHSV*0.1 - normColor*0.15 -
-                  normTexture*0.15 - normShape*0.25 - (1-normPHash)*0.25
-   ```
-
-3. **Agrégation finale** :
-   ```go
-   finalScore := (globalScore*0.65 + avgTileScore*0.35) * 100
-   ```
-
-#### Métriques de distance utilisées :
-
-- **Distance de Manhattan** pour les histogrammes
-- **Distance euclidienne** pour les couleurs moyennes
-- **Distance de Hamming** pour les pHash
-- **Différence absolue** pour les textures et formes
-
-### `main.go` - Point d'entrée
-
-Nous avons organisé le flux principal ainsi :
-
-1. **Chargement/génération** du descripteur de l'image cible
-2. **Parcours** de la banque de descripteurs JSON
-3. **Comparaison systématique** avec chaque image de référence
-4. **Sélection** de la meilleure correspondance
-
-```go
-for _, file := range bankFiles {
-    bankDesc := model.LoadDescriptor(file)
-    score := compare.CompareDescriptors(desc, bankDesc)
-    if score > bestScore {
-        bestScore = score
-        bestMatch = bankDesc.ImageName
-    }
-}
 ```
 
 ## 🚀 Installation et configuration
 
 ### Prérequis
-
 - **Go 1.24.1** ou supérieur
 - **Git** pour cloner le projet
 
 ### Installation
-
-1. **Cloner le repository** :
-
 ```bash
 git clone https://github.com/MrIsmail1/Golang_images_matcher.git
 cd Go_image_search
-```
-
-2. **Installer les dépendances** :
-
-```bash
 go mod tidy
-```
-
-3. **Vérifier la structure** :
-
-```bash
-ls -la banque/images/  # Images de test
-ls -la banque/json/    # Descripteurs (vide au début)
 ```
 
 ## 📖 Utilisation
 
 ### Utilisation basique
-
 1. **Placer vos images** dans `banque/images/`
-
-2. **Modifier le nom de l'image cible** dans `main.go` :
-
+2. **Modifier l'image cible** dans `main.go` :
 ```go
-imageName := "votre_image.jpg"  // Remplacer par votre image
+imageName := "votre_image.jpg"
 ```
-
-3. **Exécuter l'analyse** :
-
+3. **Exécuter** :
 ```bash
 go run main.go
 ```
 
 ### Exemple de sortie
-
 ```
 🔧 Descripteur non trouvé, génération en cours...
-✅ Descripteur généré : banque/json/13.json
+✅ Descripteur généré : banque/json/chien8.json
 🔹 cala1.jpg : 23.45% de similarité
 🔹 cala2.jpg : 67.89% de similarité
 🔹 chien1.png : 12.34% de similarité
-🔹 chien2.png : 45.67% de similarité
 
 🏆 Meilleure correspondance : cala2.jpg avec 67.89%
 ```
 
-### Optimisation des performances
-
-Nous avons implémenté un **système de cache JSON** :
-
-- À la première analyse, le descripteur est **calculé et sauvegardé**
-- Aux analyses suivantes, le descripteur est **chargé depuis le fichier**
-- Cela divise le temps d'exécution par **10 à 50** selon la taille des images
-
 ## 📊 Exemples de résultats
 
-### Cas d'usage typiques
-
-| Type d'images              | Précision attendue | Temps d'analyse |
-| -------------------------- | ------------------ | --------------- |
-| 🐕 **Chiens (même race)**  | 80-95%             | ~50ms           |
-| 🏖️ **Paysages similaires** | 60-80%             | ~50ms           |
-| 🏠 **Architecture**        | 70-85%             | ~50ms           |
-| 🎨 **Œuvres d'art**        | 40-70%             | ~50ms           |
-
-### Seuils de qualité
-
-Nous recommandons ces **seuils d'interprétation** :
-
-- **90-100%** : Images quasi-identiques (redimensionnement, légère compression)
-- **70-89%** : Images très similaires (même objet, angle différent)
-- **50-69%** : Images similaires (même catégorie, composition proche)
-- **30-49%** : Similarité faible (quelques éléments communs)
+### Seuils de qualité recommandés
+- **90-100%** : Images quasi-identiques
+- **70-89%** : Images très similaires
+- **50-69%** : Images similaires
+- **30-49%** : Similarité faible
 - **0-29%** : Images différentes
 
 ## 🔬 Détails techniques
 
-### Paramètres de configuration
+### Avantages de l'architecture refactorisée
+✅ **Modulaire** : Chaque domaine dans son package  
+✅ **Évolutive** : Facile d'ajouter de nouveaux descripteurs  
+✅ **Testable** : Modules indépendants  
+✅ **Maintenable** : Responsabilités claires  
+✅ **Performante** : Cache JSON intelligent
 
-```go
-const (
-    StandardSize = 256    // Taille de normalisation (256×256)
-    TilesPerRow  = 9      // Grille de tuiles (9×9 = 81 tuiles)
-    Bins         = 64     // Nombre de bins pour les histogrammes
-)
-```
-
-### Gestion mémoire
-
-Nous avons optimisé l'utilisation mémoire :
-
-- **Redimensionnement** systématique pour limiter la RAM
-- **Streaming JSON** pour éviter de charger tout en mémoire
-- **Garbage collection** automatique de Go
-
-### Formats supportés
-
-Grâce aux imports Go standard :
-
-```go
-_ "image/jpeg"
-_ "image/png"
-_ "image/gif"
-```
-
-Nous supportons nativement **JPEG, PNG et GIF**.
-
-### Robustesse
-
-Nous avons prévu la gestion des cas d'erreur :
-
-- **Fichiers corrompus** : erreur explicite lors du décodage
-- **Formats non supportés** : message d'erreur clair
-- **Descripteurs manquants** : régénération automatique
-- **Division par zéro** : vérifications dans les calculs de distance
+### Système de cache optimisé
+- **Premier run** : Analyse complète + sauvegarde JSON
+- **Runs suivants** : Chargement ultra-rapide (100-1000× plus rapide)
+- **Gestion automatique** : Détection et régénération si nécessaire
 
 ## 🚀 Optimisations futures
 
-Nous avons identifié plusieurs axes d'amélioration :
-
 ### Performance
-
-- 🔄 **Parallélisation** de l'analyse des tuiles avec des goroutines
-- 💾 **Cache en mémoire** des descripteurs fréquemment utilisés
-- 🗄️ **Base de données** (SQLite/PostgreSQL) pour les gros volumes
-- ⚡ **Index spécialisés** pour la recherche approximative
+- 🔄 **Parallélisation** avec goroutines
+- 🗄️ **Base de données** pour gros volumes
+- ⚡ **Index LSH** pour recherche approximative
 
 ### Algorithmes
+- 🤖 **Deep learning** avec CNNs pré-entraînés
+- 🎯 **SIFT/SURF** pour points d'intérêt
+- 📐 **Invariance géométrique** avancée
 
-- 🤖 **Deep learning** avec des CNNs pré-entraînés (ResNet, VGG)
-- 🎯 **SIFT/SURF** pour les points d'intérêt locaux
-- 📐 **Geometric hashing** pour l'invariance aux transformations
-- 🔍 **LSH (Locality Sensitive Hashing)** pour la recherche à grande échelle
-
-### Interface utilisateur
-
-- 🌐 **API REST** pour l'intégration web
-- 🖥️ **Interface graphique** avec Fyne ou web
-- 📱 **Application mobile** avec Go Mobile
-- 🔧 **Configuration dynamique** des poids et seuils
-
-### Fonctionnalités avancées
-
-- 🔍 **Recherche par région** (crop automatique)
-- 🎨 **Recherche par couleur dominante**
-- 📏 **Recherche par dimensions** et ratio
-- 🏷️ **Tags automatiques** basés sur le contenu
+### Interface
+- 🌐 **API REST** pour intégration web
+- 🖥️ **Interface graphique** moderne
+- 🔧 **Configuration dynamique** des paramètres
 
 ---
 
-## 👥 Contribution
-
-Nous encourageons les contributions ! Les domaines prioritaires :
-
-- 🐛 **Correction de bugs** et optimisations
-- 📚 **Documentation** et exemples
-- 🧪 **Tests unitaires** et benchmarks
-- 🆕 **Nouvelles métriques** de similarité
-
-## 📄 Licence
-
-Ce projet est développé dans un cadre éducatif et de recherche.
-
----
-
-**Développé avec ❤️ en Go** - Système de recherche d'images par similarité utilisant des techniques d'analyse visuelle avancées.
+**Développé avec ❤️ en Go** - Architecture modulaire pour la recherche d'images par similarité
